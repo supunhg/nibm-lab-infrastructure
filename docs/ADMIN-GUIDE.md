@@ -3,7 +3,7 @@
 **Audience:** the lab administrator (technical assistant / IT staff).
 **Scope:** everything needed to run the lab day to day and to hand it over. Browser tasks need no special tools. Steps marked **(server)** need SSH to the Ubuntu VM — see §15.
 
-*Designed and built by Supun Hewagamage ([@supunhg](https://github.com/supunhg)), Technical Assistant, NIBM — 2026.*
+*Designed and built from scratch by Supun Hewagamage ([@supunhg](https://github.com/supunhg)) as a self-initiated project while Technical Assistant at NIBM, 2026. NIBM had no lab server before it.*
 
 ---
 
@@ -295,4 +295,4 @@ The phone must be on campus Wi-Fi or ZeroTier.
 
 ---
 
-*NIBM Lab infrastructure · designed and built by **Supun Hewagamage** ([github.com/supunhg](https://github.com/supunhg)) during his tenure as Technical Assistant, 2026.*
+*NIBM Lab: conceived, built and documented by **Supun Hewagamage** ([github.com/supunhg](https://github.com/supunhg)) on his own initiative during his tenure as Technical Assistant, 2026.*

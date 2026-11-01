@@ -95,4 +95,4 @@ print(client.get_collections())
 
 ---
 
-*NIBM Lab · built by Supun Hewagamage ([@supunhg](https://github.com/supunhg))*
+*The NIBM Lab was created for students by Supun Hewagamage ([@supunhg](https://github.com/supunhg)), Technical Assistant, 2026.*

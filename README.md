@@ -2,7 +2,7 @@
 
 **A campus-scale, self-hosted lab platform: 30+ open-source services on a single VMware ESXi VM, unified behind one identity layer, with role-based access, automated onboarding/offboarding, monitoring and encrypted backups.**
 
-Built at the National Institute of Business Management (NIBM), Sri Lanka, by **Supun Hewagamage** ([@supunhg](https://github.com/supunhg)) during his tenure as Technical Assistant, 2026.
+Designed and built from scratch by **Supun Hewagamage** ([@supunhg](https://github.com/supunhg)) as a self-initiated project at the National Institute of Business Management (NIBM), Sri Lanka, during his tenure as Technical Assistant (2026). NIBM had no student lab server before this; version 1 was built while learning, then audited and hardened into the platform described here.
 
 ![Admin dashboard](assets/admin-dashboard.png)
 
