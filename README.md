@@ -61,6 +61,7 @@ flowchart LR
 - **[Admin Guide](docs/ADMIN-GUIDE.md):** day-to-day operation, from navigation to handover
 - **[Student Guide](docs/STUDENT-GUIDE.md):** for end users
 - **[Security findings](docs/security.md):** audit log with fixes
+- **[Case study (PDF)](docs/case-study.pdf):** the project write-up
 
 ## Repository layout
 
