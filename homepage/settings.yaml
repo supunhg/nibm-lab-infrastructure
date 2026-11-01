@@ -1,0 +1,57 @@
+title: NIBM Homelab
+description: Campus edge infrastructure — dell-node01
+favicon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/homepage.png
+theme: dark
+color: slate
+headerStyle: clean
+cardBlur: md
+statusStyle: dot
+hideVersion: true
+useEqualHeights: true
+disableCollapse: true
+target: _blank
+quicklaunch:
+  searchDescriptions: true
+  hideInternetSearch: false
+  showSearchSuggestions: true
+  provider: duckduckgo
+layout:
+  # --- Workspace tab ---
+  Productivity & Tools:
+    tab: Workspace
+    style: row
+    columns: 3
+    icon: mdi-briefcase-variant-outline
+  # small groups use column style so they sit side by side
+  Automation & Media:
+    tab: Workspace
+    icon: mdi-play-circle-outline
+  Storage:
+    tab: Workspace
+    icon: mdi-nas
+  Gaming & Minecraft:
+    tab: Workspace
+    icon: mdi-minecraft
+  Quick Links:
+    tab: Workspace
+    style: row
+    columns: 6
+  Account:
+    tab: Workspace
+    style: row
+    columns: 6
+  # --- Operations tab ---
+  Infrastructure:
+    tab: Operations
+    style: row
+    columns: 3
+    icon: mdi-server-network
+  Identity & Operations:
+    tab: Operations
+    style: row
+    columns: 4
+    icon: mdi-shield-key-outline
+  ZeroTier Remote Access:
+    tab: Operations
+    style: row
+    columns: 6

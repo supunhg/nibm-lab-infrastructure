@@ -1,0 +1,602 @@
+# NIBM homelab stack - /opt/homelab/docker-compose.yml
+# Conventions: data under /opt/homelab/<service>, secrets in .env (chmod 600), images pinned (Diun reports new tags).
+# Direct ports are reachable only from ZeroTier + the admin workstation (host firewall); LAN users go through NPM (443).
+
+x-defaults: &defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+networks:
+  default:
+    name: homelab_default
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+          ip_range: 172.18.1.0/24 # dynamic addresses; 172.18.0.x reserved for static IPs
+          gateway: 172.18.0.1
+
+services:
+  # ---------- Core edge ----------
+  adguardhome:
+    <<: *defaults
+    image: adguard/adguardhome:v0.107.79
+    container_name: adguardhome
+    ports:
+      - '53:53/tcp'
+      - '53:53/udp'
+      - '3000:3000/tcp'
+      - '8085:80/tcp'
+      - '853:853/tcp'
+    volumes:
+      - /opt/homelab/adguard/work:/opt/adguardhome/work
+      - /opt/homelab/adguard/conf:/opt/adguardhome/conf
+
+  nginx-proxy-manager:
+    <<: *defaults
+    image: jc21/nginx-proxy-manager:2.16.0
+    container_name: nginx-proxy-manager
+    networks:
+      default:
+        ipv4_address: 172.18.0.10 # MeshCentral trustedProxy depends on this
+    ports:
+      - '80:80/tcp'
+      - '443:443/tcp'
+      - '81:81/tcp'
+    volumes:
+      - /opt/homelab/npm/data:/data
+      - /opt/homelab/npm/letsencrypt:/etc/letsencrypt
+
+  portainer:
+    <<: *defaults
+    image: portainer/portainer-ce:2.45.1
+    container_name: portainer
+    ports:
+      - '9000:9000/tcp'
+      - '9443:9443/tcp'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/homelab/portainer_data:/data
+
+  # ---------- Identity ----------
+  authentik-db:
+    <<: *defaults
+    image: postgres:16.15-alpine
+    container_name: authentik-db
+    environment:
+      - POSTGRES_USER=authentik
+      - POSTGRES_PASSWORD=${AUTHENTIK_DB_PASSWORD}
+      - POSTGRES_DB=authentik
+    volumes:
+      - /opt/homelab/authentik/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U authentik -d authentik']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  authentik-server:
+    <<: *defaults
+    image: ghcr.io/goauthentik/server:2026.8.5
+    container_name: authentik-server
+    command: server
+    shm_size: 512mb
+    environment: &authentik_env
+      - AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY}
+      - AUTHENTIK_POSTGRESQL__HOST=authentik-db
+      - AUTHENTIK_POSTGRESQL__NAME=authentik
+      - AUTHENTIK_POSTGRESQL__USER=authentik
+      - AUTHENTIK_POSTGRESQL__PASSWORD=${AUTHENTIK_DB_PASSWORD}
+      - AUTHENTIK_BOOTSTRAP_PASSWORD=${AUTHENTIK_BOOTSTRAP_PASSWORD}
+      - AUTHENTIK_BOOTSTRAP_TOKEN=${AUTHENTIK_BOOTSTRAP_TOKEN}
+      - AUTHENTIK_BOOTSTRAP_EMAIL=${ADMIN_EMAIL}
+      - AUTHENTIK_DISABLE_UPDATE_CHECK=true
+      - AUTHENTIK_ERROR_REPORTING__ENABLED=false
+      - AUTHENTIK_DISABLE_STARTUP_ANALYTICS=true
+      - AUTHENTIK_WEB__WORKERS=2
+      - NTFY_AUTH_PARAM=${NTFY_AUTH_PARAM} # read by the homelab blueprint (!Env)
+      - NTFY_PUBLISH_TOKEN=${NTFY_PUBLISH_TOKEN} # qdrant access-request alerts
+      - QDRANT_API_KEY=${QDRANT_API_KEY} # signs per-user Qdrant JWTs (homelab-qdrant-jwt mapping)
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - TZ=Asia/Colombo
+    ports:
+      - '9100:9000/tcp'
+    volumes:
+      - /opt/homelab/authentik/data:/data
+      - /opt/homelab/authentik/templates:/templates
+      - /opt/homelab/authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+
+  authentik-worker:
+    <<: *defaults
+    image: ghcr.io/goauthentik/server:2026.8.5
+    container_name: authentik-worker
+    command: worker
+    shm_size: 512mb
+    environment: *authentik_env
+    volumes:
+      - /opt/homelab/authentik/data:/data
+      - /opt/homelab/authentik/templates:/templates
+      - /opt/homelab/authentik/certs:/certs
+      - /opt/homelab/authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+
+  # ---------- Observability ----------
+  uptime-kuma:
+    <<: *defaults
+    image: louislam/uptime-kuma:2.5.5
+    container_name: uptime-kuma
+    ports:
+      - '3001:3001/tcp'
+    volumes:
+      - /opt/homelab/uptime-kuma:/app/data
+
+  speedtest-tracker:
+    <<: *defaults
+    image: lscr.io/linuxserver/speedtest-tracker:v1.15.0-ls173
+    container_name: speedtest-tracker
+    ports:
+      - '8087:80/tcp'
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Colombo
+      - APP_KEY=${SPEEDTEST_APP_KEY}
+      - APP_URL=https://speed.lab
+      - DB_CONNECTION=sqlite
+      - DB_DATABASE=/config/database.sqlite
+      - SPEEDTEST_SCHEDULE=0 */6 * * * # every 6h (was hourly: ~24 full-bandwidth tests/day on the campus uplink)
+      - PRUNE_RESULTS_OLDER_THAN=180
+      - PUBLIC_DASHBOARD=true
+    volumes:
+      - /opt/homelab/speedtest-tracker/data:/config
+
+  beszel:
+    <<: *defaults
+    image: henrygd/beszel:0.21.1
+    container_name: beszel
+    ports:
+      - '8092:8090/tcp'
+    environment:
+      - APP_URL=https://metrics.lab
+      - USER_EMAIL=${ADMIN_EMAIL}
+      - USER_PASSWORD=${BESZEL_ADMIN_PASSWORD}
+    volumes:
+      - /opt/homelab/beszel/data:/beszel_data
+      - /opt/homelab/beszel/socket:/beszel_socket
+
+  beszel-agent:
+    <<: *defaults
+    image: henrygd/beszel-agent:0.21.1
+    container_name: beszel-agent
+    network_mode: host
+    environment:
+      - LISTEN=/beszel_socket/beszel.sock
+      - KEY=${BESZEL_AGENT_KEY}
+      - EXTRA_FILESYSTEMS=/extra-filesystems/nas
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/homelab/beszel/socket:/beszel_socket
+      - /opt/homelab/beszel/agent:/var/lib/beszel-agent
+      - /mnt/nas_jellyfin:/extra-filesystems/nas:ro,rslave
+
+  dozzle:
+    <<: *defaults
+    image: amir20/dozzle:v10.7.4
+    container_name: dozzle
+    # no published port: Dozzle trusts the Remote-User header, so it must only be reachable through NPM + Authentik
+    environment:
+      - DOZZLE_AUTH_PROVIDER=forward-proxy # identity comes from Authentik via NPM
+      - DOZZLE_NO_ANALYTICS=true
+      - DOZZLE_ENABLE_ACTIONS=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  diun:
+    <<: *defaults
+    image: crazymax/diun:4.33.1
+    container_name: diun
+    command: serve
+    environment:
+      - TZ=Asia/Colombo
+      - DIUN_WATCH_SCHEDULE=0 6 * * *
+      - DIUN_WATCH_JITTER=30s
+      - DIUN_WATCH_FIRSTCHECKNOTIF=false
+      - DIUN_PROVIDERS_DOCKER=true
+      - DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT=true
+      - DIUN_DEFAULTS_WATCHREPO=true
+      - DIUN_DEFAULTS_NOTIFYON=new
+      - DIUN_DEFAULTS_MAXTAGS=10
+      - DIUN_DEFAULTS_SORTTAGS=semver
+      - DIUN_DEFAULTS_INCLUDETAGS=^v?\d+\.\d+(\.\d+)?(-ls\d+)?$$
+      - DIUN_NOTIF_NTFY_ENDPOINT=http://ntfy
+      - DIUN_NOTIF_NTFY_TOPIC=homelab-updates
+      - DIUN_NOTIF_NTFY_TOKEN=${NTFY_PUBLISH_TOKEN}
+    volumes:
+      - /opt/homelab/diun:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  ntfy:
+    <<: *defaults
+    image: binwiederhier/ntfy:v2.35.0
+    container_name: ntfy
+    command: serve
+    ports:
+      - '8093:80/tcp'
+    environment:
+      - TZ=Asia/Colombo
+      - NTFY_BASE_URL=https://ntfy.lab
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_CACHE_FILE=/var/lib/ntfy/cache.db
+      - NTFY_CACHE_DURATION=72h
+      - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db
+      - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      - NTFY_ENABLE_LOGIN=true
+      - NTFY_AUTH_USERS=${NTFY_AUTH_USERS} # provisioned: admin user (bcrypt)
+      - NTFY_AUTH_TOKENS=${NTFY_AUTH_TOKENS} # provisioned: publish token used by Diun/Authentik/Kuma
+      - NTFY_UPSTREAM_BASE_URL=https://ntfy.sh # lets the iOS app receive instant push
+    volumes:
+      - /opt/homelab/ntfy:/var/lib/ntfy
+
+  # ---------- Remote management ----------
+  meshcentral:
+    <<: *defaults
+    image: ghcr.io/ylianst/meshcentral:1.2.6-mongodb
+    container_name: meshcentral
+    ports:
+      - '4430:4430/tcp'
+    environment:
+      - HOSTNAME=mesh.lab
+      - REVERSE_PROXY=true
+      - REVERSE_PROXY_TLS_PORT=443
+    volumes:
+      - /opt/homelab/meshcentral/data:/opt/meshcentral/meshcentral-data
+      - /opt/homelab/meshcentral/user_files:/opt/meshcentral/meshcentral-files
+
+  # ---------- Applications ----------
+  vaultwarden:
+    <<: *defaults
+    image: vaultwarden/server:1.37.4
+    container_name: vaultwarden
+    ports:
+      - '8088:80/tcp'
+    environment:
+      - DOMAIN=https://vault.lab
+      - SIGNUPS_ALLOWED=false
+      - INVITATIONS_ALLOWED=true
+      - DISABLE_ADMIN_TOKEN=true # /admin is gated by Authentik (homelab-admins) at vault.lab; direct :8088 is ZeroTier/admin-PC only
+      - SHOW_PASSWORD_HINT=false
+      - IP_HEADER=X-Forwarded-For
+      - LOGIN_RATELIMIT_MAX_BURST=5
+      - TZ=Asia/Colombo
+    volumes:
+      - /opt/homelab/vaultwarden/data:/data
+
+  n8n-db:
+    <<: *defaults
+    image: postgres:16.15-alpine
+    container_name: n8n-db
+    environment:
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD}
+      - POSTGRES_DB=n8n
+    volumes:
+      - /opt/homelab/n8n/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U n8n -d n8n']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    <<: *defaults
+    image: n8nio/n8n:2.41.6
+    container_name: n8n
+    ports:
+      - '5678:5678/tcp'
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=n8n-db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_HOST=n8n.lab
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_EDITOR_BASE_URL=https://n8n.lab/
+      - WEBHOOK_URL=https://n8n.lab/
+      - N8N_PROXY_HOPS=1
+      - N8N_SECURE_COOKIE=false # ZeroTier users still reach it over plain http://10.147.17.10:5678
+      - GENERIC_TIMEZONE=Asia/Colombo
+      - TZ=Asia/Colombo
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=20000
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+    volumes:
+      - /opt/homelab/n8n/data:/home/node/.n8n
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+
+  flarum-db:
+    <<: *defaults
+    image: mariadb:10.11.19
+    container_name: flarum-db
+    environment:
+      - MYSQL_DATABASE=flarum
+      - MYSQL_USER=flarum
+      - MYSQL_PASSWORD=${FLARUM_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${FLARUM_DB_ROOT_PASSWORD}
+    command: --innodb-buffer-pool-size=256M --max-connections=100 --skip-name-resolve
+    volumes:
+      - /opt/homelab/flarum/db:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  flarum:
+    <<: *defaults
+    image: crazymax/flarum:1.8.19
+    container_name: flarum
+    ports:
+      - '8089:8000/tcp'
+    environment:
+      - FLARUM_BASE_URL=https://forum.lab
+      - DB_HOST=flarum-db
+      - DB_NAME=flarum
+      - DB_USER=flarum
+      - DB_PASSWORD=${FLARUM_DB_PASSWORD}
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Colombo
+      - OPCACHE_MEM_SIZE=128
+      - REAL_IP_FROM=172.18.0.10/32
+      - REAL_IP_HEADER=X-Forwarded-For
+    volumes:
+      - /opt/homelab/flarum/data:/data
+    depends_on:
+      flarum-db:
+        condition: service_healthy
+
+  forgejo-db:
+    <<: *defaults
+    image: postgres:16.15-alpine
+    container_name: forgejo-db
+    environment:
+      - POSTGRES_USER=forgejo
+      - POSTGRES_PASSWORD=${FORGEJO_DB_PASSWORD}
+      - POSTGRES_DB=forgejo
+    volumes:
+      - /opt/homelab/forgejo/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U forgejo -d forgejo']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  forgejo:
+    <<: *defaults
+    image: codeberg.org/forgejo/forgejo:17.0.1
+    container_name: forgejo
+    ports:
+      - '3003:3000/tcp'
+      - '2222:22/tcp' # git over SSH, open to campus LAN
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - FORGEJO__database__DB_TYPE=postgres
+      - FORGEJO__database__HOST=forgejo-db:5432
+      - FORGEJO__database__NAME=forgejo
+      - FORGEJO__database__USER=forgejo
+      - FORGEJO__database__PASSWD=${FORGEJO_DB_PASSWORD}
+      - FORGEJO__server__DOMAIN=git.lab
+      - FORGEJO__server__ROOT_URL=https://git.lab/
+      - FORGEJO__server__SSH_DOMAIN=git.lab
+      - FORGEJO__server__SSH_PORT=2222
+      - FORGEJO__server__LANDING_PAGE=explore
+      - FORGEJO__security__INSTALL_LOCK=true
+      - FORGEJO__security__SECRET_KEY=${FORGEJO_SECRET_KEY}
+      - FORGEJO__security__INTERNAL_TOKEN=${FORGEJO_INTERNAL_TOKEN}
+      - FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES=172.18.0.10/32
+      - FORGEJO__service__DISABLE_REGISTRATION=false
+      - FORGEJO__service__REGISTER_MANUAL_CONFIRM=true # admin activates every self-registered student
+      - FORGEJO__service__REQUIRE_SIGNIN_VIEW=true
+      - FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE=true
+      - FORGEJO__service__DEFAULT_ALLOW_CREATE_ORGANIZATION=false
+      - FORGEJO__repository__DEFAULT_PRIVATE=private
+      - FORGEJO__repository__MAX_CREATION_LIMIT=25
+      - FORGEJO__repository__upload__FILE_MAX_SIZE=50
+      - FORGEJO__openid__ENABLE_OPENID_SIGNIN=false
+      - FORGEJO__openid__ENABLE_OPENID_SIGNUP=false
+      - FORGEJO__mailer__ENABLED=false
+      - FORGEJO__actions__ENABLED=false
+      - FORGEJO__cron.update_checker__ENABLED=false
+      - FORGEJO__log__LEVEL=Warn
+      - TZ=Asia/Colombo
+    volumes:
+      - /opt/homelab/forgejo/data:/data
+    depends_on:
+      forgejo-db:
+        condition: service_healthy
+
+  paperless-db:
+    <<: *defaults
+    image: postgres:16.15-alpine
+    container_name: paperless-db
+    environment:
+      - POSTGRES_USER=paperless
+      - POSTGRES_PASSWORD=${PAPERLESS_DB_PASSWORD}
+      - POSTGRES_DB=paperless
+    volumes:
+      - /opt/homelab/paperless/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U paperless -d paperless']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  paperless-redis:
+    <<: *defaults
+    image: valkey/valkey:8.1-alpine
+    container_name: paperless-redis
+    command: valkey-server --save 60 1 --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - /opt/homelab/paperless/redis:/data
+
+  paperless:
+    <<: *defaults
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.4.1
+    container_name: paperless
+    ports:
+      - '8010:8000/tcp'
+    environment:
+      - PAPERLESS_URL=https://docs.lab
+      - PAPERLESS_SECRET_KEY=${PAPERLESS_SECRET_KEY}
+      - PAPERLESS_DBHOST=paperless-db
+      - PAPERLESS_DBUSER=paperless
+      - PAPERLESS_DBPASS=${PAPERLESS_DB_PASSWORD}
+      - PAPERLESS_REDIS=redis://paperless-redis:6379
+      - PAPERLESS_ADMIN_USER=admin
+      - PAPERLESS_ADMIN_PASSWORD=${PAPERLESS_ADMIN_PASSWORD}
+      - PAPERLESS_ADMIN_MAIL=${ADMIN_EMAIL}
+      - PAPERLESS_TIME_ZONE=Asia/Colombo
+      - PAPERLESS_OCR_LANGUAGE=eng
+      - PAPERLESS_TASK_WORKERS=2
+      - PAPERLESS_THREADS_PER_WORKER=2
+      - PAPERLESS_WEBSERVER_WORKERS=2
+      - PAPERLESS_CONSUMER_RECURSIVE=true
+      - PAPERLESS_CONSUMER_SUBDIRS_AS_TAGS=true
+      - PAPERLESS_TRUSTED_PROXIES=172.18.0.10
+      - PAPERLESS_USE_X_FORWARD_HOST=true
+      - PAPERLESS_USE_X_FORWARD_PORT=true
+      - PAPERLESS_PROXY_SSL_HEADER=["HTTP_X_FORWARDED_PROTO", "https"]
+      - USERMAP_UID=1000
+      - USERMAP_GID=1000
+    volumes:
+      - /opt/homelab/paperless/data:/usr/src/paperless/data
+      - /opt/homelab/paperless/media:/usr/src/paperless/media
+      - /opt/homelab/paperless/export:/usr/src/paperless/export
+      - /opt/homelab/paperless/consume:/usr/src/paperless/consume
+    depends_on:
+      paperless-db:
+        condition: service_healthy
+      paperless-redis:
+        condition: service_started
+
+  qdrant:
+    <<: *defaults
+    image: qdrant/qdrant:v1.20.0
+    container_name: qdrant
+    ports:
+      - '6333:6333/tcp'
+      - '6334:6334/tcp'
+    environment:
+      - QDRANT__SERVICE__ENABLE_CORS=true
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY} # master key; also signs per-user JWTs
+      - QDRANT__SERVICE__JWT_RBAC=true
+      - QDRANT__TELEMETRY_DISABLED=true
+      - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
+      - QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS=4
+    volumes:
+      - /opt/homelab/qdrant/storage:/qdrant/storage
+      - /opt/homelab/qdrant/snapshots:/qdrant/snapshots
+
+  jellyfin:
+    <<: *defaults
+    image: jellyfin/jellyfin:12.1
+    container_name: jellyfin
+    ports:
+      - '8096:8096/tcp'
+    environment:
+      - TZ=Asia/Colombo
+      - JELLYFIN_PublishedServerUrl=https://jellyfin.lab
+    volumes:
+      - /opt/homelab/jellyfin/config:/config
+      - /opt/homelab/jellyfin/cache:/cache
+      - type: bind
+        source: /mnt/nas_jellyfin
+        target: /media
+        read_only: true
+        bind:
+          propagation: rslave # picks up the NAS automount even if it mounts after the container starts
+
+  homepage:
+    <<: *defaults
+    image: ghcr.io/gethomepage/homepage:v2.4.0
+    container_name: homepage
+    ports:
+      - '3002:3000/tcp'
+    environment:
+      - HOMEPAGE_ALLOWED_HOSTS=home.lab,home.lab:3002,10.147.17.10,10.147.17.10:3002,192.168.1.10:3002
+    volumes:
+      - /opt/homelab/homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Student view of home.lab (NPM routes non-admins here after Authentik login).
+  # No published port and no Docker socket: status comes from siteMonitor probes.
+  homepage-student:
+    <<: *defaults
+    image: ghcr.io/gethomepage/homepage:v2.4.0
+    container_name: homepage-student
+    environment:
+      - HOMEPAGE_ALLOWED_HOSTS=home.lab
+    volumes:
+      - /opt/homelab/homepage-student/config:/app/config
+
+  stirling-pdf:
+    <<: *defaults
+    image: stirlingtools/stirling-pdf:3.1.0
+    container_name: stirling-pdf
+    mem_limit: 1536m # image sizes its JVM heap to 70% of this (was sizing from 16 GB host RAM)
+    ports:
+      - '8084:8080/tcp'
+    environment:
+      - DOCKER_ENABLE_SECURITY=false
+      - SYSTEM_SHOWUPDATE=false
+    volumes:
+      - /opt/homelab/stirling-pdf:/configs
+
+  it-tools:
+    <<: *defaults
+    image: corentinth/it-tools@sha256:8b8128748339583ca951af03dfe02a9a4d7363f61a216226fc28030731a5a61f
+    container_name: it-tools
+    ports:
+      - '8082:80/tcp'
+
+  excalidraw:
+    <<: *defaults
+    image: excalidraw/excalidraw@sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9
+    container_name: excalidraw
+    ports:
+      - '8090:80/tcp'
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:80']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  crafty:
+    <<: *defaults
+    image: registry.gitlab.com/crafty-controller/crafty-4:4.11.0
+    container_name: crafty_controller
+    environment:
+      - TZ=Asia/Colombo
+    ports:
+      - '8444:8443'
+      - '25565:25565'
+    volumes:
+      - /opt/homelab/crafty/backups:/crafty/backups
+      - /opt/homelab/crafty/logs:/crafty/logs
+      - /opt/homelab/crafty/servers:/crafty/servers
+      - /opt/homelab/crafty/config:/crafty/app/config
+      - /opt/homelab/crafty/import:/crafty/import

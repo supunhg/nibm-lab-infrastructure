@@ -1,0 +1,151 @@
+- Infrastructure:
+    - VMware ESXi:
+        href: https://192.168.1.5
+        description: Hypervisor & Virtual Machines
+        icon: vmware
+    - Portainer:
+        href: https://portainer.lab
+        description: Docker Container Manager
+        icon: portainer
+        server: my-docker
+        container: portainer
+    - Nginx Proxy Manager:
+        href: https://proxy.lab
+        description: Reverse Proxy & Clean URLs
+        icon: nginx-proxy-manager
+        server: my-docker
+        container: nginx-proxy-manager
+    - AdGuard Home:
+        href: https://dns.lab
+        description: DNS Server & Ad Blocker
+        icon: adguard-home
+        server: my-docker
+        container: adguardhome
+    - MeshCentral:
+        href: https://mesh.lab
+        description: Remote Desktop, Terminal and Device Management
+        icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/meshcentral.png
+        server: my-docker
+        container: meshcentral
+    - Uptime Kuma:
+        href: https://status.lab
+        description: Service Monitoring & Status
+        icon: uptime-kuma
+        server: my-docker
+        container: uptime-kuma
+        widget:
+          type: uptimekuma
+          url: http://uptime-kuma:3001
+          slug: services
+
+- Productivity & Tools:
+    - Student Forum:
+        href: https://forum.lab
+        description: Student Community & Discussions
+        icon: flarum
+        server: my-docker
+        container: flarum
+    - Vaultwarden:
+        href: https://vault.lab
+        description: Secure Password & Credential Vault
+        icon: vaultwarden
+        server: my-docker
+        container: vaultwarden
+    - IT-Tools:
+        href: https://tools.lab
+        description: Handy Utilities for IT & Devs
+        icon: it-tools
+        server: my-docker
+        container: it-tools
+    - Speedtest Tracker:
+        href: https://speed.lab
+        description: Internet Bandwidth Monitoring
+        icon: speedtest-tracker
+        server: my-docker
+        container: speedtest-tracker
+    - Stirling PDF:
+        href: https://pdf.lab
+        description: PDF Swiss Army Knife
+        icon: stirling-pdf
+        server: my-docker
+        container: stirling-pdf
+    - Excalidraw:
+        href: https://draw.lab
+        description: Collaborative Whiteboard & Sketching
+        icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/excalidraw.png
+        server: my-docker
+        container: excalidraw
+
+    - Qdrant Vector DB:
+        href: https://qdrant.lab/dashboard
+        description: Vector DB for approved Authentik users
+        icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qdrant.png
+        server: my-docker
+        container: qdrant
+
+    - Forgejo:
+        href: https://git.lab
+        description: Git hosting for staff & students
+        icon: forgejo
+        server: my-docker
+        container: forgejo
+    - Paperless-ngx:
+        href: https://docs.lab
+        description: Document archive with OCR & search
+        icon: paperless-ngx
+        server: my-docker
+        container: paperless
+
+- Identity & Operations:
+    - Authentik:
+        href: https://auth.lab
+        description: SSO, registrations & account approval
+        icon: authentik
+        server: my-docker
+        container: authentik-server
+    - Beszel:
+        href: https://metrics.lab
+        description: Host & container metrics history
+        icon: beszel
+        server: my-docker
+        container: beszel
+    - Dozzle:
+        href: https://logs.lab
+        description: Live container logs (admins)
+        icon: dozzle
+        server: my-docker
+        container: dozzle
+    - ntfy:
+        href: https://ntfy.lab
+        description: Push alerts for updates, downtime and signups
+        icon: ntfy
+        server: my-docker
+        container: ntfy
+
+- Automation & Media:
+    - n8n:
+        href: https://n8n.lab
+        description: Multi-User Workflow Automation
+        icon: n8n
+        server: my-docker
+        container: n8n
+    - Jellyfin:
+        href: https://jellyfin.lab
+        description: Media Streaming Server
+        icon: jellyfin
+        server: my-docker
+        container: jellyfin
+
+- Storage:
+    - Synology NAS:
+        href: https://onlynas.lab
+        description: Personal Network Storage (DSM)
+        icon: synology-dsm
+
+- Gaming & Minecraft:
+    - Crafty Controller:
+        href: https://crafty.lab
+        description: Minecraft Server & World Manager
+        icon: minecraft
+        server: my-docker
+        container: crafty_controller

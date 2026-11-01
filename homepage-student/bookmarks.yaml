@@ -1,0 +1,25 @@
+- Quick Links:
+    - ChatGPT:
+        - href: https://chatgpt.com
+          icon: si-openai-#e6e9ef
+    - Claude:
+        - href: https://claude.ai
+          icon: si-claude-#d97757
+    - GitHub:
+        - href: https://github.com
+          icon: si-github-#e6e9ef
+
+- Account:
+    - Student Guide:
+        - href: https://home.lab/guide
+          icon: mdi-book-open-variant-#e6e9ef
+          description: how-to
+    - My account:
+        - href: https://auth.lab/if/user/
+          icon: mdi-account-circle-outline-#2dd4bf
+          description: settings
+    - Sign out:
+        - href: https://home.lab/outpost.goauthentik.io/sign_out
+          icon: mdi-logout-#f87171
+          description: end session
+          target: _self

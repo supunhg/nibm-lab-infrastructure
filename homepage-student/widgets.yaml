@@ -1,0 +1,22 @@
+- greeting:
+    text_size: 2xl
+    text: NIBM Student Hub
+- openmeteo:
+    label: Colombo
+    latitude: 6.9271
+    longitude: 79.8612
+    timezone: Asia/Colombo
+    units: metric
+    cache: 10
+- search:
+    provider: duckduckgo
+    target: _blank
+- datetime:
+    text_size: lg
+    format:
+      weekday: short
+      day: numeric
+      month: short
+      hour: 2-digit
+      minute: 2-digit
+      hour12: false

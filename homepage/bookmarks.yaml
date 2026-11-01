@@ -1,0 +1,124 @@
+- ZeroTier Remote Access:
+    - VMware ESXi:
+        - href: https://10.147.17.10:8443
+          description: port 8443
+          icon: vmware
+    - MeshCentral:
+        - href: https://10.147.17.10:4430
+          description: port 4430
+          icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/meshcentral.png
+    - Student Forum:
+        - href: http://10.147.17.10:8089
+          description: port 8089
+          icon: flarum
+    - Vaultwarden:
+        - href: http://10.147.17.10:8088
+          description: port 8088
+          icon: vaultwarden
+    - Jellyfin:
+        - href: http://10.147.17.10:8096
+          description: port 8096
+          icon: jellyfin
+    - Speedtest:
+        - href: http://10.147.17.10:8087
+          description: port 8087
+          icon: speedtest-tracker
+    - n8n:
+        - href: http://10.147.17.10:5678
+          description: port 5678
+          icon: n8n
+    - Synology DSM:
+        - href: http://10.147.17.10:5000
+          description: port 5000
+          icon: synology-dsm
+    - Portainer:
+        - href: http://10.147.17.10:9000
+          description: port 9000
+          icon: portainer
+    - Uptime Kuma:
+        - href: http://10.147.17.10:3001
+          description: port 3001
+          icon: uptime-kuma
+    - IT-Tools:
+        - href: http://10.147.17.10:8082
+          description: port 8082
+          icon: it-tools
+    - Stirling PDF:
+        - href: http://10.147.17.10:8084
+          description: port 8084
+          icon: stirling-pdf
+    - Excalidraw:
+        - href: http://10.147.17.10:8090
+          description: port 8090
+          icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/excalidraw.png
+    - AdGuard:
+        - href: http://10.147.17.10:8085
+          description: port 8085
+          icon: adguard-home
+    - NPM:
+        - href: http://10.147.17.10:81
+          description: port 81
+          icon: nginx-proxy-manager
+    - Crafty Controller:
+        - href: https://10.147.17.10:8444
+          description: port 8444
+          icon: minecraft
+
+    - Qdrant (API key):
+        - href: http://10.147.17.10:6333/dashboard
+          description: port 6333
+          icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/qdrant.png
+    - Forgejo:
+        - href: http://10.147.17.10:3003
+          description: port 3003
+          icon: forgejo
+    - Paperless-ngx:
+        - href: http://10.147.17.10:8010
+          description: port 8010
+          icon: paperless-ngx
+    - Authentik:
+        - href: http://10.147.17.10:9100
+          description: port 9100
+          icon: authentik
+    - Beszel:
+        - href: http://10.147.17.10:8092
+          description: port 8092
+          icon: beszel
+    - ntfy:
+        - href: http://10.147.17.10:8093
+          description: port 8093
+          icon: ntfy
+
+- Quick Links:
+    - ChatGPT:
+        - href: https://chatgpt.com
+          icon: si-openai-#e6e9ef
+    - Claude:
+        - href: https://claude.ai
+          icon: si-claude-#d97757
+    - GitHub:
+        - href: https://github.com
+          icon: si-github-#e6e9ef
+
+- Account:
+    - Approve users:
+        - href: https://auth.lab/if/admin/#/identity/users
+          icon: mdi-account-check-outline-#2dd4bf
+          description: Authentik
+    - Qdrant requests:
+        - href: https://auth.lab/if/admin/#/identity/groups
+          icon: mdi-key-chain-variant-#818cf8
+          description: pending
+    - Vault invites:
+        - href: https://vault.lab/admin
+          icon: mdi-email-plus-outline-#2dd4bf
+          description: Vaultwarden
+    - Admin Guide:
+        - href: https://home.lab/admin-guide
+          icon: mdi-book-open-variant-#e6e9ef
+          description: how-to
+    - Sign out:
+        - href: https://home.lab/outpost.goauthentik.io/sign_out
+          icon: mdi-logout-#f87171
+          description: end session
+          target: _self

@@ -1,0 +1,583 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+# NIBM Homelab identity (Authentik). Applied automatically; manual: docker exec authentik-worker ak apply_blueprint /blueprints/custom/homelab.yaml
+# Groups:  homelab-admins (everything) · students (self-registered, student dashboard)
+#          qdrant-readers (read all) · qdrant-users (per-collection grants via attribute qdrant_collections)
+#          qdrant-managers (full Qdrant control) · qdrant-pending (asked for access, awaiting admin)
+version: 1
+metadata:
+  name: homelab-identity
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  # ---------- People ----------
+  - model: authentik_core.user
+    id: user-supun
+    identifiers: { username: supun }
+    attrs:
+      name: Supun Hewagamage
+      email: !Env [ADMIN_EMAIL, ""]
+      type: internal
+      is_active: true
+  - model: authentik_core.user
+    identifiers: { username: akadmin } # break-glass account; keep its password offline
+    attrs:
+      email: akadmin@nibm.lab
+
+  # ---------- Groups ----------
+  - model: authentik_core.group
+    id: group-admins
+    identifiers: { name: homelab-admins }
+    attrs:
+      users:
+        - !Find [authentik_core.user, [username, akadmin]]
+        - !KeyOf user-supun
+  - model: authentik_core.group
+    identifiers: { name: authentik Admins } # superusers: Authentik admin UI
+    attrs:
+      users:
+        - !Find [authentik_core.user, [username, akadmin]]
+        - !KeyOf user-supun
+  - model: authentik_core.group
+    id: group-qdrant
+    identifiers: { name: qdrant-users }
+    attrs:
+      attributes:
+        description: "Per-collection Qdrant access. Set on the user (or a project group), e.g. qdrant_collections: {thesis_rag: rw, shared_docs: r}"
+  - model: authentik_core.group
+    id: group-qdrant-readers
+    identifiers: { name: qdrant-readers }
+    attrs:
+      attributes: { description: Read-only access to every Qdrant collection }
+  - model: authentik_core.group
+    id: group-qdrant-managers
+    identifiers: { name: qdrant-managers }
+    attrs:
+      attributes: { description: "Full Qdrant control (create/delete collections, snapshots)" }
+  - model: authentik_core.group
+    id: group-qdrant-pending
+    identifiers: { name: qdrant-pending }
+    attrs:
+      attributes: { description: "Asked for Qdrant access. Review the user's qdrant_request attribute, grant a tier, then remove them from this group" }
+  - model: authentik_core.group
+    id: group-students
+    identifiers: { name: students } # default group for self-registered accounts; sees the student dashboard
+
+  # ---------- Registration (admin approval) ----------
+  - model: authentik_policies_password.passwordpolicy
+    id: password-policy
+    identifiers: { name: homelab-password-policy }
+    attrs:
+      password_field: password
+      length_min: 10
+      amount_uppercase: 0
+      amount_lowercase: 1
+      amount_digits: 1
+      amount_symbols: 0
+      check_static_rules: true
+      check_have_i_been_pwned: false
+      check_zxcvbn: true
+      zxcvbn_score_threshold: 2
+      error_message: Use at least 10 characters, with letters and a digit, and avoid common passwords.
+
+  - model: authentik_stages_prompt.prompt
+    id: prompt-username
+    identifiers: { name: homelab-enroll-username }
+    attrs: { field_key: username, label: Student index number, type: username, required: true, placeholder: "e.g. cohndne251f-019 (lowercase)", sub_text: "Your NIBM index number becomes your username in every lab service.", placeholder_expression: false, order: 0 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-name
+    identifiers: { name: homelab-enroll-name }
+    attrs: { field_key: name, label: Full name, type: text, required: true, placeholder: Full name, placeholder_expression: false, order: 1 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-email
+    identifiers: { name: homelab-enroll-email }
+    attrs: { field_key: email, label: Email, type: email, required: true, placeholder: Campus email, placeholder_expression: false, order: 2 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password
+    identifiers: { name: homelab-enroll-password }
+    attrs: { field_key: password, label: Password, type: password, required: true, placeholder: Password, placeholder_expression: false, order: 3 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-password-repeat
+    identifiers: { name: homelab-enroll-password-repeat }
+    attrs: { field_key: password_repeat, label: Repeat password, type: password, required: true, placeholder: Repeat password, placeholder_expression: false, order: 4 }
+
+  - model: authentik_policies_expression.expressionpolicy
+    id: policy-unique-identity
+    identifiers: { name: homelab-unique-username-email }
+    attrs:
+      expression: |
+        # Self-registration is for students: username must be the NIBM index number (co...-NNN, lowercase),
+        # and email/username must be unique (apps that link accounts by username/email rely on it).
+        # Staff/admin accounts are created by an admin in the UI and are not subject to this rule.
+        import re
+        from authentik.core.models import User
+        data = request.context.get("prompt_data", {})
+        email = (data.get("email") or "").strip()
+        username = (data.get("username") or "").strip()
+        if not re.fullmatch(r"co[a-z0-9]+-[0-9]{3}", username):
+            if re.fullmatch(r"co[a-z0-9]+-[0-9]{3}", username.lower()):
+                ak_message("Please type your index number in lowercase, e.g. cohndne251f-019.")
+            else:
+                ak_message("Username must be your NIBM student index number: starts with 'co' and ends with a dash and 3 digits, e.g. cohndne251f-019.")
+            return False
+        if email and User.objects.filter(email__iexact=email).exists():
+            ak_message("An account with this email already exists. Ask the admin if you forgot your login.")
+            return False
+        if username and User.objects.filter(username__iexact=username).exists():
+            ak_message("That username is already taken.")
+            return False
+        return True
+
+  - model: authentik_stages_prompt.promptstage
+    id: stage-enroll-prompt
+    identifiers: { name: homelab-enroll-prompt }
+    attrs:
+      fields:
+        - !KeyOf prompt-username
+        - !KeyOf prompt-name
+        - !KeyOf prompt-email
+        - !KeyOf prompt-password
+        - !KeyOf prompt-password-repeat
+      validation_policies:
+        - !KeyOf password-policy
+        - !KeyOf policy-unique-identity
+
+  - model: authentik_stages_user_write.userwritestage
+    id: stage-enroll-write
+    identifiers: { name: homelab-enroll-write }
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: true # admin activates in Directory > Users
+      create_users_group: !KeyOf group-students
+      user_type: internal
+
+  - model: authentik_stages_deny.denystage
+    id: stage-enroll-pending
+    identifiers: { name: homelab-enroll-pending }
+    attrs:
+      deny_message: Registration received. An administrator must approve your account before you can sign in.
+
+  - model: authentik_flows.flow
+    id: flow-enroll
+    identifiers: { slug: homelab-enrollment }
+    attrs:
+      name: Homelab registration
+      title: Request an account
+      designation: enrollment
+      authentication: require_unauthenticated
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-enroll, stage: !KeyOf stage-enroll-prompt }
+    attrs: { order: 10 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-enroll, stage: !KeyOf stage-enroll-write }
+    attrs: { order: 20 }
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-enroll, stage: !KeyOf stage-enroll-pending }
+    attrs: { order: 30 }
+
+  # "Sign up" link on the default login page
+  - model: authentik_stages_identification.identificationstage
+    identifiers: { name: default-authentication-identification }
+    attrs:
+      user_fields: [username, email]
+      enrollment_flow: !KeyOf flow-enroll
+
+  # ---------- Qdrant per-user key ----------
+  # Evaluated at each login. Mints a Qdrant JWT (HS256, signed with QDRANT_API_KEY) scoped to the user's tier and
+  # hands it to NPM as the X-Qdrant-Key header; NPM forwards it as api-key. Nobody ever sees the master key.
+  - model: authentik_providers_oauth2.scopemapping
+    id: mapping-qdrant-jwt
+    identifiers: { name: homelab-qdrant-jwt }
+    attrs:
+      scope_name: ak_proxy
+      description: Qdrant per-user JWT
+      expression: |
+        import base64, hashlib, hmac, json, os, time
+        user = request.user
+        attrs = dict(user.group_attributes(request))
+        names = {g.name for g in user.all_groups()}
+        access = None
+        if names & {"homelab-admins", "qdrant-managers"}:
+            access = "m"
+        else:
+            cols = attrs.get("qdrant_collections") or {}
+            if isinstance(cols, dict) and cols and "qdrant-users" in names:
+                access = [{"collection": str(c), "access": "rw" if str(a).lower() in ("rw", "w", "write") else "r"}
+                          for c, a in cols.items()]
+            elif "qdrant-readers" in names:
+                access = "r"
+        headers = dict(attrs.get("additionalHeaders") or {})
+        if access is not None:
+            b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+            days = int(attrs.get("qdrant_token_days", 7))
+            claims = {"sub": user.username, "exp": int(time.time()) + days * 86400, "access": access}
+            msg = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()) + "." + b64(json.dumps(claims).encode())
+            sig = b64(hmac.new(os.environ["QDRANT_API_KEY"].encode(), msg.encode(), hashlib.sha256).digest())
+            headers["X-Qdrant-Key"] = msg + "." + sig
+            headers["X-Qdrant-Access"] = access if isinstance(access, str) else ", ".join(
+                f"{a['collection']} ({a['access']})" for a in access)
+            headers["X-Qdrant-Expires"] = time.strftime("%Y-%m-%d", time.localtime(claims["exp"]))
+        attrs["additionalHeaders"] = headers
+        return {"ak_proxy": {"user_attributes": attrs, "is_superuser": user.is_superuser}}
+
+  # ---------- Qdrant access requests (self-service) ----------
+  - model: authentik_stages_prompt.prompt
+    id: prompt-q-purpose
+    identifiers: { name: qdrant-request-purpose }
+    attrs: { field_key: qdrant_purpose, label: "What will you use Qdrant for?", type: text_area, required: true, placeholder: "e.g. RAG chatbot for my final-year project", placeholder_expression: false, order: 0 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-q-collections
+    identifiers: { name: qdrant-request-collections }
+    attrs: { field_key: qdrant_collections, label: "Collection name(s) you need", type: text, required: false, placeholder: "e.g. thesis_rag (leave blank if unsure)", placeholder_expression: false, order: 1 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-q-write
+    identifiers: { name: qdrant-request-write }
+    attrs: { field_key: qdrant_write, label: "I need to write data (not just read)", type: checkbox, required: false, placeholder: "", placeholder_expression: false, order: 2 }
+  - model: authentik_stages_prompt.prompt
+    id: prompt-q-done
+    identifiers: { name: qdrant-request-done }
+    attrs: { field_key: qdrant_done, label: Request sent, type: static, required: false, placeholder: "Your request was sent to the lab admin. Once approved, open https://qdrant.lab (dashboard) or https://qdrant.lab/my-token (API key).", placeholder_expression: false, order: 0 }
+  - model: authentik_stages_prompt.promptstage
+    id: stage-q-form
+    identifiers: { name: qdrant-request-form }
+    attrs:
+      fields: [!KeyOf prompt-q-purpose, !KeyOf prompt-q-collections, !KeyOf prompt-q-write]
+  - model: authentik_stages_prompt.promptstage
+    id: stage-q-done
+    identifiers: { name: qdrant-request-done }
+    attrs:
+      fields: [!KeyOf prompt-q-done]
+  - model: authentik_policies_expression.expressionpolicy
+    id: policy-q-submit
+    identifiers: { name: qdrant-request-submit }
+    attrs:
+      expression: |
+        # Records the request on the user, adds them to qdrant-pending and pushes an ntfy alert to the admins.
+        import json, os, time, urllib.request
+        from authentik.core.models import Group
+        user = request.user
+        data = request.context.get("prompt_data", {})
+        req = {"purpose": data.get("qdrant_purpose", ""), "collections": data.get("qdrant_collections", ""),
+               "write": bool(data.get("qdrant_write")), "requested_at": time.strftime("%Y-%m-%d %H:%M")}
+        attrs = dict(user.attributes or {})
+        attrs["qdrant_request"] = req
+        user.attributes = attrs
+        user.save()
+        user.groups.add(Group.objects.get(name="qdrant-pending"))
+        level = "read/write" if req["write"] else "read"
+        target = (" to " + req["collections"]) if req["collections"] else ""
+        msg = (f"{user.name} ({user.username}) wants {level} access{target}.\nPurpose: {req['purpose']}\n"
+               "Review: https://auth.lab/if/admin/#/identity/groups (qdrant-pending)")
+        body = json.dumps({"topic": "homelab-auth", "title": "Qdrant access request", "message": msg,
+                           "tags": ["key"], "priority": 4}).encode()
+        try:
+            urllib.request.urlopen(urllib.request.Request("http://ntfy/", data=body,
+                headers={"Authorization": "Bearer " + os.environ.get("NTFY_PUBLISH_TOKEN", "")}), timeout=5)
+        except Exception as exc:
+            ak_logger.warning("qdrant request ntfy failed", error=str(exc))
+        return True
+  - model: authentik_flows.flow
+    id: flow-q-request
+    identifiers: { slug: qdrant-request }
+    attrs:
+      name: Request Qdrant access
+      title: Request Qdrant access
+      designation: stage_configuration
+      authentication: require_authenticated
+  - model: authentik_flows.flowstagebinding
+    identifiers: { target: !KeyOf flow-q-request, stage: !KeyOf stage-q-form }
+    attrs: { order: 10 }
+  - model: authentik_flows.flowstagebinding
+    id: binding-q-done
+    identifiers: { target: !KeyOf flow-q-request, stage: !KeyOf stage-q-done }
+    attrs: { order: 20, evaluate_on_plan: false, re_evaluate_policies: true }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf binding-q-done, policy: !KeyOf policy-q-submit, order: 0 }
+
+  # ---------- Forward-auth applications ----------
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-qdrant
+    identifiers: { name: qdrant-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://qdrant.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+      property_mappings: # default ak_proxy mapping replaced by homelab-qdrant-jwt (adds the per-user key)
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+        - !KeyOf mapping-qdrant-jwt
+  - model: authentik_core.application
+    id: app-qdrant
+    identifiers: { slug: qdrant }
+    attrs:
+      name: Qdrant Vector DB
+      provider: !KeyOf provider-qdrant
+      meta_launch_url: https://qdrant.lab/dashboard
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-qdrant, group: !KeyOf group-qdrant, order: 0 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-qdrant, group: !KeyOf group-admins, order: 1 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-qdrant, group: !KeyOf group-qdrant-readers, order: 2 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-qdrant, group: !KeyOf group-qdrant-managers, order: 3 }
+  - model: authentik_policies.policybinding # students pass the door; their key (or the request page) decides the rest
+    identifiers: { target: !KeyOf app-qdrant, group: !KeyOf group-students, order: 4 }
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-home
+    identifiers: { name: homepage-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://home.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-home
+    identifiers: { slug: homepage }
+    attrs:
+      name: Homelab Dashboard
+      provider: !KeyOf provider-home
+      meta_launch_url: https://home.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-home, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-home, group: !KeyOf group-students, order: 1 }
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-logs
+    identifiers: { name: dozzle-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://logs.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-logs
+    identifiers: { slug: dozzle }
+    attrs:
+      name: Container Logs
+      provider: !KeyOf provider-logs
+      meta_launch_url: https://logs.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-logs, group: !KeyOf group-admins, order: 0 }
+
+  # ---------- Member gates (students + admins): identity binding for apps with their own accounts ----------
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-forum
+    identifiers: { name: forum-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://forum.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-forum
+    identifiers: { slug: forum }
+    attrs:
+      name: Student Forum
+      provider: !KeyOf provider-forum
+      meta_launch_url: https://forum.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-forum, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-forum, group: !KeyOf group-students, order: 1 }
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-git-signup
+    identifiers: { name: git-signup-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://git.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-git-signup
+    identifiers: { slug: git-signup }
+    attrs:
+      name: Forgejo sign-up
+      provider: !KeyOf provider-git-signup
+      meta_launch_url: https://git.lab/user/sign_up
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-git-signup, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-git-signup, group: !KeyOf group-students, order: 1 }
+
+  # ---------- Admin consoles: Authentik gate (homelab-admins) in front of each app's own login ----------
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-portainer
+    identifiers: { name: portainer-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://portainer.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-portainer
+    identifiers: { slug: portainer }
+    attrs:
+      name: Portainer
+      group: Admin consoles
+      provider: !KeyOf provider-portainer
+      meta_launch_url: https://portainer.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-portainer, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-npm-admin
+    identifiers: { name: npm-admin-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://proxy.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-npm-admin
+    identifiers: { slug: npm-admin }
+    attrs:
+      name: Nginx Proxy Manager
+      group: Admin consoles
+      provider: !KeyOf provider-npm-admin
+      meta_launch_url: https://proxy.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-npm-admin, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-adguard
+    identifiers: { name: adguard-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://dns.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-adguard
+    identifiers: { slug: adguard }
+    attrs:
+      name: AdGuard Home
+      group: Admin consoles
+      provider: !KeyOf provider-adguard
+      meta_launch_url: https://dns.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-adguard, group: !KeyOf group-admins, order: 0 }
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-crafty
+    identifiers: { name: crafty-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://crafty.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-crafty
+    identifiers: { slug: crafty }
+    attrs:
+      name: Crafty Controller
+      group: Admin consoles
+      provider: !KeyOf provider-crafty
+      meta_launch_url: https://crafty.lab
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-crafty, group: !KeyOf group-admins, order: 0 }
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: provider-vw-admin
+    identifiers: { name: vaultwarden-admin-forward-auth }
+    attrs:
+      mode: forward_single
+      external_host: https://vault.lab
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      access_token_validity: hours=12
+  - model: authentik_core.application
+    id: app-vw-admin
+    identifiers: { slug: vaultwarden-admin }
+    attrs:
+      name: Vaultwarden admin panel
+      group: Admin consoles
+      provider: !KeyOf provider-vw-admin
+      meta_launch_url: https://vault.lab/admin
+      policy_engine_mode: any
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-vw-admin, group: !KeyOf group-admins, order: 0 }
+
+  - model: authentik_outposts.outpost
+    identifiers: { managed: goauthentik.io/outposts/embedded }
+    attrs:
+      providers:
+        - !KeyOf provider-home
+        - !KeyOf provider-qdrant
+        - !KeyOf provider-logs
+        - !KeyOf provider-portainer
+        - !KeyOf provider-npm-admin
+        - !KeyOf provider-adguard
+        - !KeyOf provider-crafty
+        - !KeyOf provider-vw-admin
+        - !KeyOf provider-forum
+        - !KeyOf provider-git-signup
+      config:
+        authentik_host: https://auth.lab/
+        authentik_host_insecure: true
+        authentik_host_browser: ""
+        log_level: info
+
+  # ---------- Notify admins of new registrations (in-app + ntfy push) ----------
+  - model: authentik_events.notificationwebhookmapping
+    id: mapping-ntfy
+    identifiers: { name: ntfy-json }
+    attrs:
+      expression: |
+        user = notification.event.context.get("model", {})
+        return {
+            "topic": "homelab-auth",
+            "title": "Account awaiting approval",
+            "message": f"{user.get('name', 'New user')} registered. Approve at https://auth.lab/if/admin/#/identity/users",
+            "tags": ["bust_in_silhouette"],
+            "priority": 4,
+        }
+  - model: authentik_events.notificationtransport
+    id: transport-ntfy
+    identifiers: { name: ntfy-push }
+    attrs:
+      mode: webhook
+      webhook_url: !Format ["http://ntfy/?auth=%s", !Env [NTFY_AUTH_PARAM, ""]]
+      webhook_mapping_body: !KeyOf mapping-ntfy
+      send_once: true
+  - model: authentik_events.notificationtransport
+    id: transport-local
+    identifiers: { name: homelab-local }
+    attrs:
+      mode: local
+  - model: authentik_policies_event_matcher.eventmatcherpolicy
+    id: policy-user-created
+    identifiers: { name: match-user-registered }
+    attrs:
+      action: model_created
+      app: null # event.app is the emitting middleware, not authentik.core - match on model only
+      model: authentik_core.user
+  - model: authentik_events.notificationrule
+    id: rule-registration
+    identifiers: { name: notify-admins-new-registration }
+    attrs:
+      severity: notice
+      destination_group: !KeyOf group-admins
+      transports:
+        - !KeyOf transport-local
+        - !KeyOf transport-ntfy
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf rule-registration, policy: !KeyOf policy-user-created, order: 0 }

@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Mint a per-user Qdrant JWT (HS256, signed with QDRANT_API_KEY from /opt/homelab/.env).
+usage: qdrant-token <user> [r|m] [days] [collection ...]
+  r = read-only, m = manage (read/write). With collections, access is limited to them.
+Users send it as:  api-key: <token>   to https://qdrant-api.lab  (or Authorization: Bearer <token>)
+Revoke everyone: rotate QDRANT_API_KEY in .env and `docker compose up -d qdrant` (also update NPM via gen-npm.sh)."""
+import base64, hashlib, hmac, json, sys, time
+if len(sys.argv) < 2: sys.exit(__doc__)
+user, access = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else "r")
+days, cols = int(sys.argv[3]) if len(sys.argv) > 3 else 90, sys.argv[4:]
+assert access in ("r", "m"), "access must be r or m"
+key = next(l.split("=", 1)[1].strip() for l in open("/opt/homelab/.env") if l.startswith("QDRANT_API_KEY="))
+b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=")
+claims = {"sub": user, "exp": int(time.time()) + days * 86400,
+          "access": [{"collection": c, "access": "rw" if access == "m" else "r"} for c in cols] if cols else access}
+msg = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()) + b"." + b64(json.dumps(claims).encode())
+print((msg + b"." + b64(hmac.new(key.encode(), msg, hashlib.sha256).digest())).decode())

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Nightly homelab backup -> encrypted restic repo on the Synology. Managed by Claude.
+# Restore: see /opt/homelab/README.md
+set -uo pipefail
+export RESTIC_REPOSITORY=/mnt/nas_jellyfin/.homelab-backups/restic
+export RESTIC_PASSWORD_FILE=/root/.restic-password
+export RESTIC_CACHE_DIR=/var/cache/restic
+H=/opt/homelab; D=$H/_dumps; LOG=/var/log/homelab-backup.log
+set -a; . $H/.env; set +a
+KUMA_PUSH=$(cat /root/.kuma-backup-push 2>/dev/null)
+fail() {
+  echo "$(date -Is) FAIL: $1" | tee -a $LOG
+  curl -s -o /dev/null -H "Authorization: Bearer $NTFY_PUBLISH_TOKEN" -H "Title: Backup FAILED" -H "Priority: 5" -d "$1" http://127.0.0.1:8093/homelab-alerts
+  [ -n "$KUMA_PUSH" ] && curl -s -o /dev/null "http://127.0.0.1:3001/api/push/$KUMA_PUSH?status=down&msg=$(echo "$1" | head -c 80 | jq -sRr @uri)"
+  exit 1
+}
+exec >>$LOG 2>&1; echo "=== $(date -Is) start"
+ls /mnt/nas_jellyfin >/dev/null 2>&1 && findmnt -n /mnt/nas_jellyfin -t cifs >/dev/null || fail "NAS not mounted"
+rm -rf $D; mkdir -p $D/sqlite
+# 1. logical DB dumps (consistent, version-independent)
+docker exec n8n-db       pg_dump -U n8n -Fc n8n             > $D/n8n.pgdump        || fail "n8n dump"
+docker exec authentik-db pg_dump -U authentik -Fc authentik > $D/authentik.pgdump  || fail "authentik dump"
+docker exec forgejo-db   pg_dump -U forgejo -Fc forgejo     > $D/forgejo.pgdump    || fail "forgejo dump"
+docker exec paperless-db pg_dump -U paperless -Fc paperless > $D/paperless.pgdump  || fail "paperless dump"
+docker exec flarum-db sh -c 'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --all-databases' > $D/flarum.sql || fail "flarum dump"
+docker exec temp-db   sh -c 'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --all-databases' > $D/temp-site.sql || fail "temp-site dump"
+# 2. SQLite online backups
+for f in vaultwarden/data/db.sqlite3 uptime-kuma/kuma.db npm/data/database.sqlite speedtest-tracker/data/database.sqlite beszel/data/data.db ntfy/auth.db; do
+  [ -f "$H/$f" ] && sqlite3 "$H/$f" ".backup '$D/sqlite/$(echo $f | tr / _)'" || echo "skip $f"
+done
+# 3. Qdrant full storage snapshot (replaces raw storage in the backup)
+rm -f $H/qdrant/snapshots/*.snapshot
+curl -sf -X POST -H "api-key: $QDRANT_API_KEY" "http://127.0.0.1:6333/snapshots?wait=true" >/dev/null || fail "qdrant snapshot"
+# 4. restic
+restic backup --tag nightly --one-file-system \
+  $H /etc/iptables /etc/ssh/sshd_config.d /etc/fail2ban/jail.local /etc/fstab /etc/docker/daemon.json \
+  /etc/sysctl.d/60-homelab.conf /etc/cloudflared /etc/systemd/system /var/lib/zerotier-one /root/.restic-password \
+  --exclude "$H/*/db" --exclude "$H/flarum/db" --exclude "$H/temp-site/db_data" --exclude "$H/qdrant/storage" \
+  --exclude "$H/jellyfin/cache" --exclude "$H/paperless/redis" --exclude "$H/crafty/backups" \
+  --exclude "$H/minecraft" --exclude "$H/downloads" --exclude "*.log" || fail "restic backup"
+restic forget --tag nightly --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune -q || fail "restic prune"
+[ "$(date +%u)" = 7 ] && { restic check --read-data-subset=10% -q || fail "restic check"; }
+rm -f $H/qdrant/snapshots/*.snapshot
+SZ=$(restic stats latest --json | jq -r '.total_size' | numfmt --to=iec)
+echo "$(date -Is) OK ($SZ)"
+[ -n "$KUMA_PUSH" ] && curl -s -o /dev/null "http://127.0.0.1:3001/api/push/$KUMA_PUSH?status=up&msg=OK%20$SZ"

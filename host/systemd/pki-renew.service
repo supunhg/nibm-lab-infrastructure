@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew NIBM Homelab server certificate when < 60 days remain
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pki-issue

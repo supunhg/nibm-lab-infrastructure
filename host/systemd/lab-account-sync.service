@@ -1,0 +1,7 @@
+[Unit]
+Description=NIBM Lab account sync (Authentik -> forum/Forgejo activation & suspension)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/lab-account-sync
